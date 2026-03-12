@@ -72,21 +72,18 @@ def scrape(soup: BeautifulSoup) -> list[dict]:
                 rows.append({"scraped_date": scraped_date,
                              "location": "Maryland (Statewide)", **prices})
 
-    # --- Metro areas: every h3 inside the metro section ---
-    metro_h2 = soup.find("h2", string=lambda s: s and "metro" in s.lower())
-    if metro_h2:
-        for h3 in metro_h2.find_next_siblings():
-            # Stop when we hit the next h2
-            if h3.name == "h2":
-                break
-            if h3.name == "h3":
-                metro_name = h3.get_text(strip=True)
-                table = h3.find_next("table")
-                if table:
-                    prices = parse_current_row(table)
-                    if prices:
-                        rows.append({"scraped_date": scraped_date,
-                                     "location": metro_name, **prices})
+    # --- Metro areas: every h3 on the page followed by a prices table ---
+    for h3 in soup.find_all("h3"):
+        metro_name = h3.get_text(strip=True)
+        # Skip non-metro h3s (e.g. "highest recorded average price")
+        if "highest recorded" in metro_name.lower():
+            continue
+        table = h3.find_next("table")
+        if table:
+            prices = parse_current_row(table)
+            if prices:
+                rows.append({"scraped_date": scraped_date,
+                             "location": metro_name, **prices})
 
     return rows
 
