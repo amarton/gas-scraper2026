@@ -1,0 +1,38 @@
+name: Daily MD Gas Price Scraper
+
+on:
+  schedule:
+    # Runs every day at 10:00 AM ET (14:00 UTC)
+    - cron: "0 14 * * *"
+  workflow_dispatch: # Allow manual runs from the GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # needed to push the updated CSV back
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Run scraper
+        run: python scrape_md_gas.py
+
+      - name: Commit and push updated CSV
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/md_gas_prices.csv
+          # Only commit if there are changes
+          git diff --cached --quiet || git commit -m "chore: add gas prices $(date +'%Y-%m-%d')"
+          git push
