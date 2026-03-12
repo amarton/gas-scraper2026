@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 AAA Maryland Gas Price Scraper
-Scrapes Maryland average gas prices from the AAA state averages page
-(which renders server-side without requiring JavaScript).
+Scrapes statewide + all metro area average gas prices for Maryland.
 Appends results to a CSV file for historical tracking.
 """
 
@@ -14,7 +13,7 @@ from datetime import date, datetime
 import requests
 from bs4 import BeautifulSoup
 
-URL = "https://gasprices.aaa.com/state-gas-price-averages/"
+URL = "https://gasprices.aaa.com/?state=MD"
 OUTPUT_FILE = "data/md_gas_prices.csv"
 
 HEADERS = {
@@ -45,31 +44,56 @@ def parse_price(text: str) -> str:
     return text.strip().lstrip("$").strip() if text else ""
 
 
-def parse_maryland(soup: BeautifulSoup) -> dict:
-    """Find Maryland row in the state averages table."""
-    table = soup.find("table")
-    if not table:
-        return {}
-
+def parse_current_row(table) -> dict | None:
+    """Extract the 'Current Avg.' row from a prices table."""
     for row in table.find_all("tr"):
         cells = row.find_all(["td", "th"])
-        if not cells:
-            continue
-        state_name = cells[0].get_text(strip=True)
-        if "Maryland" in state_name and len(cells) >= 5:
+        if cells and cells[0].get_text(strip=True) == "Current Avg." and len(cells) >= 5:
             return {
                 "regular":   parse_price(cells[1].get_text()),
                 "mid_grade": parse_price(cells[2].get_text()),
                 "premium":   parse_price(cells[3].get_text()),
                 "diesel":    parse_price(cells[4].get_text()),
             }
-    return {}
+    return None
+
+
+def scrape(soup: BeautifulSoup) -> list[dict]:
+    scraped_date = str(date.today())
+    rows = []
+
+    # --- Statewide: find the h1 then the next table ---
+    h1 = soup.find("h1")
+    if h1:
+        table = h1.find_next("table")
+        if table:
+            prices = parse_current_row(table)
+            if prices:
+                rows.append({"scraped_date": scraped_date,
+                             "location": "Maryland (Statewide)", **prices})
+
+    # --- Metro areas: every h3 inside the metro section ---
+    metro_h2 = soup.find("h2", string=lambda s: s and "metro" in s.lower())
+    if metro_h2:
+        for h3 in metro_h2.find_next_siblings():
+            # Stop when we hit the next h2
+            if h3.name == "h2":
+                break
+            if h3.name == "h3":
+                metro_name = h3.get_text(strip=True)
+                table = h3.find_next("table")
+                if table:
+                    prices = parse_current_row(table)
+                    if prices:
+                        rows.append({"scraped_date": scraped_date,
+                                     "location": metro_name, **prices})
+
+    return rows
 
 
 def append_to_csv(rows: list[dict], filepath: str):
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     file_exists = os.path.isfile(filepath)
-
     with open(filepath, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
         if not file_exists:
@@ -81,22 +105,20 @@ def main():
     print(f"[{datetime.now().isoformat()}] Fetching {URL} ...")
     soup = fetch_page(URL)
 
-    prices = parse_maryland(soup)
-    if not prices:
-        print("ERROR: Could not find Maryland row in the state averages table.", file=sys.stderr)
+    rows = scrape(soup)
+
+    if not rows:
+        print("ERROR: No price data found.", file=sys.stderr)
         sys.exit(1)
 
-    row = {
-        "scraped_date": str(date.today()),
-        "location": "Maryland (Statewide)",
-        **prices,
-    }
+    append_to_csv(rows, OUTPUT_FILE)
 
-    append_to_csv([row], OUTPUT_FILE)
-
-    print(f"  Saved to {OUTPUT_FILE}")
-    print(f"  Maryland | Regular: ${row['regular']} | Mid: ${row['mid_grade']} | "
-          f"Premium: ${row['premium']} | Diesel: ${row['diesel']}")
+    print(f"  Saved {len(rows)} rows to {OUTPUT_FILE}\n")
+    print(f"  {'Location':<30} {'Regular':>8} {'Mid':>8} {'Premium':>8} {'Diesel':>8}")
+    print(f"  {'-'*66}")
+    for r in rows:
+        print(f"  {r['location']:<30} {r['regular']:>8} {r['mid_grade']:>8} "
+              f"{r['premium']:>8} {r['diesel']:>8}")
 
 
 if __name__ == "__main__":
